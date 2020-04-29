@@ -3,21 +3,12 @@
 
 const String VERSION = "1.0";
 
+#include "MyDevice.h"
+#include "IrrigationSerialProtocol.h"
+
 #include <LiquidCrystal.h>
-#include "LcdChars.h"
+#include "UI.h"
 
-#include <ArduinoJson.h>
-const size_t JSON_DOC_CAPACITY = JSON_OBJECT_SIZE(1);
-
-
-const uint32_t SERIAL_DATA_RATE = 115200;
-const int RX = 2;
-const int TX = 3;
-
-const int NUMBER_OF_CHANNELS = 9;
-
-
-//LCD pin to Arduino
 const int pin_RS = 8; const int pin_EN = 9; const int pin_d4 = 4; const int pin_d5 = 5; const int pin_d6 = 6; const int pin_d7 = 7; const int pin_BL = 10;
 LiquidCrystal lcd( pin_RS,  pin_EN,  pin_d4,  pin_d5,  pin_d6,  pin_d7);
 
@@ -33,28 +24,6 @@ const int DIVIDER_POS = 0;
 const char* CHR_SPACE = " ";
 const char* CHR_SEPARATOR = "|";
 
-
-
-int activeChannel = 0;
-
-const int IN_HIDE = 0;
-const int IN_HIDDEN = 1;
-const int IN_SHOW = 2;
-const int IN_VISIBLE = 3;
-const int IN_REFRESH = 4;
-
-
-int state[] = {};
-const int ST_MENU = 100;
-const int ST_SEPARATORS = 101;
-const int ST_CHANNELS = 102;
-const int ST_ACTIVE_CHANNEL = 103;
-const int ST_CURRENT_TIME = 104;
-const int ST_ELAPSED_TIME = 105;
-const int ST_REMAINING_TIME = 106;
-
-
-
 #include <SoftwareSerial.h>
 SoftwareSerial mySerial(RX, TX); // RX, TX
 
@@ -63,22 +32,6 @@ SoftwareSerial mySerial(RX, TX); // RX, TX
 SimpleTimer serialTimer;
 SimpleTimer displayTimer;
 
-String menuItems[] = {"ITEM 1", "ITEM 2", "ITEM 3", "ITEM 4"};
-int menuPage = 0;
-int maxMenuPages = round(((sizeof(menuItems) / sizeof(String)) / 2) + .5);
-int cursorPosition = 0;
-
-void initStates() {
-  state[ST_MENU] = IN_REFRESH;
-  state[ST_SEPARATORS] = IN_REFRESH;
-  state[ST_CHANNELS] = IN_REFRESH;
-  state[ST_ACTIVE_CHANNEL] = IN_REFRESH;
-  state[ST_CURRENT_TIME] = IN_REFRESH;
-  state[ST_ELAPSED_TIME] = IN_HIDDEN;
-  state[ST_REMAINING_TIME] = IN_HIDDEN;
-
-}
-
 void setup() {
   Serial.begin(SERIAL_DATA_RATE);
 
@@ -86,7 +39,7 @@ void setup() {
   while (!Serial) {}
 
   mySerial.begin(SERIAL_DATA_RATE);
-  serialTimer.setInterval(500, Sent_serial);
+  serialTimer.setInterval(500, readSerial);
 
   log("Initializing LCD...");
   // Initializes and clears the LCD screen
@@ -94,23 +47,95 @@ void setup() {
   lcd.clear();
 
   // Custom caracters
-  lcd.createChar(DIVIDER_POS, DIVIDER_RIGHT);
-
-  displayTimer.setInterval(1000, refreshDisplay);
-  initStates();
-  log("LCD initialized...");
+  lcd.createChar(DIVIDER_POS, DIVIDER_RIGHT);  
+  initUiStates();
+  initUiValues();
+  log("LCD initialized.");
+  displayTimer.setInterval(2000, refreshDisplay);
 }
+
 
 void loop() {
-  //serialTimer.run();
+  serialTimer.run();
   displayTimer.run();
 }
+
+
+bool validatePayload(String payload) {
+  log("validatig payload...:"+payload+" - "+payload.length());
+  if (payload.length() != PAYLOAD_LENGTH)
+    return false;
+  log("Payload length is ok");
+
+  int from = 0;
+  int found = 0;
+  while (true) {
+    int separatorIndex = payload.indexOf(SEPARATOR, from + 1);
+    if (separatorIndex > 0) {
+      from = separatorIndex;
+      found++;
+    }
+    else {
+      break;
+    }
+  }
+    log("found:"+String(found));
+
+  return found + 1 == NUMBER_OF_SEGMENTS;
+}
+
+
+void handlePayload(String payload) {
+  log("Valid Payload received");
+  
+  uiValues[UI_MESSAGE] = getState(payload);
+  setState(UI_MESSAGE, ST_REFRESH);
+  
+  uiValues[UI_ACTIVE_CHANNEL] = getChannel(payload);
+  setState(UI_ACTIVE_CHANNEL, ST_REFRESH);
+  
+  uiValues[UI_CURRENT_TIME] = getCurrentTime(payload);
+  setState(UI_CURRENT_TIME, ST_REFRESH);
+  
+  uiValues[UI_ELAPSED_TIME] = getElapsedTime(payload);
+  setState(UI_ELAPSED_TIME, ST_REFRESH);
+  
+  uiValues[UI_REMAINING_TIME] = getRemainingTime(payload);
+  setState(UI_REMAINING_TIME, ST_REFRESH);
+}
+
+int getState(String payload) {
+  return payload.substring(2, 4).toInt();
+}
+
+String getChannel(String payload) {
+  return payload.substring(7, 9);
+}
+
+int channelToInt(String chStr) {
+  if (chStr.charAt(0) == "0")
+    return chStr.substring(1, 2).toInt();
+  else return chStr.toInt();
+}
+
+String getCurrentTime(String payload) {
+  return payload.substring(12, 16);
+}
+
+String getElapsedTime(String payload) {
+  return payload.substring(19, 23);
+}
+
+String getRemainingTime(String payload) {
+  return payload.substring(26, 30);
+}
+
 
 void refreshDisplay() {
   drawChannels();
   drawSeparators();
   drawCurrentTime();
-  drawActiveChannel();  //must be the last
+  drawActiveChannel();  //must be the last to see the cursor on the right place
 }
 
 
@@ -127,306 +152,137 @@ int readButtons() {
 }
 
 int getState(int ST) {
-  return state[ST];
+  return uiStates[ST];
 }
 
 int setState(int ST, int targetState) {
-  switch (state[ST]) {
-    case IN_SHOW:
-      if (targetState == IN_VISIBLE) state[ST] = targetState;
-      else log("Invalid state transition fired for " + String(ST) + ": " + "From IN_SHOW to " + stateToStr(targetState));
+  switch (uiStates[ST]) {
+    case ST_SHOW:
+      if (targetState == ST_VISIBLE) uiStates[ST] = targetState;
+      else log("Invalid state transition fired for " + String(ST) + ": " + "From ST_SHOW to " + stateToStr(targetState));
       break;
-    case IN_VISIBLE:
-      if (targetState == IN_REFRESH || targetState == IN_HIDE) state[ST] = targetState;
-      else log("Invalid state transition fired for " + String(ST) + " : " + "From IN_VISIBLE to " + stateToStr(targetState));
+    case ST_VISIBLE:
+      if (targetState == ST_REFRESH || targetState == ST_HIDE) uiStates[ST] = targetState;
+      else log("Invalid state transition fired for " + String(ST) + " : " + "From ST_VISIBLE to " + stateToStr(targetState));
       break;
-    case IN_HIDE:
-      if (targetState == IN_HIDDEN) state[ST] = targetState;
-      else log("Invalid state transition fired for " + String(ST) + ": " + "From IN_HIDE to " + stateToStr(targetState));
+    case ST_HIDE:
+      if (targetState == ST_HIDDEN) uiStates[ST] = targetState;
+      else log("Invalid state transition fired for " + String(ST) + ": " + "From ST_HIDE to " + stateToStr(targetState));
       break;
-    case IN_HIDDEN:
-      if (targetState == IN_SHOW) state[ST] = targetState;
-      else log("Invalid state transition fired for " + String(ST) + " : " + "From IN_HIDDEN to " + stateToStr(targetState));
+    case ST_HIDDEN:
+      if (targetState == ST_SHOW) uiStates[ST] = targetState;
+      else log("Invalid state transition fired for " + String(ST) + " : " + "From ST_HIDDEN to " + stateToStr(targetState));
       break;
-    case IN_REFRESH:
-      if (targetState == IN_VISIBLE) state[ST] = targetState;
-      else log("Invalid state transition fired for " + String(ST) + ": " + "From IN_REFRESH to " + stateToStr(targetState));
+    case ST_REFRESH:
+      if (targetState == ST_VISIBLE) uiStates[ST] = targetState;
+      else log("Invalid state transition fired for " + String(ST) + ": " + "From ST_REFRESH to " + stateToStr(targetState));
       break;
   }
 }
 
 String stateToStr(int state) {
-  if (state == IN_SHOW) return "IN_SHOW";
-  if (state == IN_VISIBLE) return "IN_VISIBLE";
-  if (state == IN_REFRESH) return "IN_REFRESH";
-  if (state == IN_HIDE) return "IN_HIDE";
-  if (state == IN_HIDDEN) return "IN_HIDDEN";
+  if (state == ST_SHOW) return "ST_SHOW";
+  if (state == ST_VISIBLE) return "ST_VISIBLE";
+  if (state == ST_REFRESH) return "ST_REFRESH";
+  if (state == ST_HIDE) return "ST_HIDE";
+  if (state == ST_HIDDEN) return "ST_HIDDEN";
 }
 
 void drawSeparators() {
-  if (getState(ST_SEPARATORS) == IN_SHOW || getState(ST_SEPARATORS) == IN_REFRESH) {
+  if (getState(UI_SEPARATORS) == ST_SHOW || getState(UI_SEPARATORS) == ST_REFRESH) {
     lcd.setCursor(10, 0);
     lcd.write(DIVIDER_POS);
     lcd.setCursor(10, 1);
     lcd.write(DIVIDER_POS);
-    setState(ST_SEPARATORS, IN_VISIBLE);
+    setState(UI_SEPARATORS, ST_VISIBLE);
   }
-  else if (getState(ST_SEPARATORS) == IN_HIDE) {
+  else if (getState(UI_SEPARATORS) == ST_HIDE) {
     lcd.setCursor(10, 0);
     lcd.print(CHR_SPACE);
     lcd.setCursor(10, 1);
     lcd.print(CHR_SPACE);
-    setState(ST_SEPARATORS, IN_HIDDEN);
+    setState(UI_SEPARATORS, ST_HIDDEN);
   }
 }
 
 void drawChannels() {
-  if (getState(ST_CHANNELS) == IN_SHOW || getState(ST_CHANNELS) == IN_REFRESH) {
+  if (getState(UI_CHANNELS) == ST_SHOW || getState(UI_CHANNELS) == ST_REFRESH) {
     lcd.setCursor(0, 0);
     lcd.print("-");
     for (int i = 0; i < NUMBER_OF_CHANNELS; i++) {
       lcd.print(i + 1);
     }
-    setState(ST_CHANNELS, IN_VISIBLE);
+    setState(UI_CHANNELS, ST_VISIBLE);
   }
-  else if (getState(ST_CHANNELS) == IN_HIDE) {
+  else if (getState(UI_CHANNELS) == ST_HIDE) {
     lcd.setCursor(0, 0);
     for (int i = 0; i <= NUMBER_OF_CHANNELS; i++) {
       lcd.print(CHR_SPACE);
     }
-    setState(ST_CHANNELS, IN_HIDDEN);
+    setState(UI_CHANNELS, ST_HIDDEN);
   }
 }
 
 void drawActiveChannel() {
-  if (getState(ST_ACTIVE_CHANNEL) == IN_SHOW || getState(ST_ACTIVE_CHANNEL) == IN_REFRESH) {
+  if (getState(UI_ACTIVE_CHANNEL) == ST_SHOW || getState(UI_ACTIVE_CHANNEL) == ST_REFRESH) {
+    int activeChannel = channelToInt(uiValues[UI_ACTIVE_CHANNEL]);
     lcd.setCursor(activeChannel, 0);
     lcd.cursor();
-    setState(ST_ACTIVE_CHANNEL, IN_VISIBLE);
+    //setState(UI_ACTIVE_CHANNEL, ST_VISIBLE);
   }
-  else if (getState(ST_ACTIVE_CHANNEL) == IN_HIDE || getState(ST_ACTIVE_CHANNEL) == IN_REFRESH) {
-    lcd.setCursor(activeChannel, 0);
+  else if (getState(UI_ACTIVE_CHANNEL) == ST_HIDE || getState(UI_ACTIVE_CHANNEL) == ST_REFRESH) {
+    lcd.setCursor(0, 0);
     lcd.noCursor();
-    setState(ST_ACTIVE_CHANNEL, IN_HIDDEN);
+    setState(UI_ACTIVE_CHANNEL, ST_HIDDEN);
   }
+}
+
+String formatTime(String unformattedTime) {
+  return unformattedTime.substring(0, 2) + ":" + unformattedTime.substring(2, 4);
 }
 
 void drawCurrentTime() {
-  if (getState(ST_CURRENT_TIME) == IN_SHOW || getState(ST_CURRENT_TIME) == IN_REFRESH) {
+  if (getState(UI_CURRENT_TIME) == ST_SHOW || getState(UI_CURRENT_TIME) == ST_REFRESH) {
+    String currentTime = formatTime(uiValues[UI_CURRENT_TIME]);
     lcd.setCursor(11, 0);
-    lcd.print("01:23");
-    setState(ST_CURRENT_TIME, IN_VISIBLE);
+    lcd.print(currentTime);
+    setState(UI_CURRENT_TIME, ST_VISIBLE);
   }
-  else if (getState(ST_CURRENT_TIME) == IN_HIDE || getState(ST_CURRENT_TIME) == IN_REFRESH) {
+  else if (getState(UI_CURRENT_TIME) == ST_HIDE || getState(UI_CURRENT_TIME) == ST_REFRESH) {
     lcd.setCursor(12, 0);
     lcd.print("     ");
-    setState(ST_CURRENT_TIME, IN_HIDDEN);
+    setState(UI_CURRENT_TIME, ST_HIDDEN);
   }
 }
 
-// This function will generate the 2 menu items that can fit on the screen. They will change as you scroll through your menu. Up and down arrows will indicate your current menu position.
-void mainMenuDraw() {
-  log(menuPage);
-
-  lcd.clear();
-  lcd.setCursor(1, 0);
-  lcd.print(menuItems[menuPage]);
-  lcd.setCursor(1, 1);
-  lcd.print(menuItems[menuPage + 1]);
-
-  if (menuPage == 0) {
-    lcd.setCursor(15, 1);
-    lcd.write(byte(2));
-  } else if (menuPage > 0 and menuPage < maxMenuPages) {
-    lcd.setCursor(15, 1);
-    lcd.write(byte(2));
-    lcd.setCursor(15, 0);
-    lcd.write(byte(1));
-  } else if (menuPage == maxMenuPages) {
-    lcd.setCursor(15, 0);
-    lcd.write(byte(1));
+void drawMessage() {
+  if (getState(UI_MESSAGE) == ST_SHOW || getState(UI_MESSAGE) == ST_REFRESH) {
+    String message = uiValues[UI_MESSAGE];
+    lcd.setCursor(1, 1);
+    lcd.print(message);
+    setState(UI_MESSAGE, ST_VISIBLE);
+  }
+  else if (getState(UI_MESSAGE) == ST_HIDE || getState(UI_MESSAGE) == ST_REFRESH) {
+    lcd.setCursor(1, 1);
+    lcd.print("         ");
+    setState(UI_MESSAGE, ST_HIDDEN);
   }
 }
 
 
-// When called, this function will erase the current cursor and redraw it based on the cursorPosition and menuPage variables.
-void drawCursor() {
-  for (int x = 0; x < 2; x++) {     // Erases current cursor
-    lcd.setCursor(0, x);
-    lcd.print(" ");
-  }
-
-  // The menu is set up to be progressive (menuPage 0 = Item 1 & Item 2, menuPage 1 = Item 2 & Item 3, menuPage 2 = Item 3 & Item 4), so
-  // in order to determine where the cursor should be you need to see if you are at an odd or even menu page and an odd or even cursor position.
-  if (menuPage % 2 == 0) {
-    if (cursorPosition % 2 == 0) {  // If the menu page is even and the cursor position is even that means the cursor should be on line 1
-      lcd.setCursor(0, 0);
-      lcd.write(byte(0));
-    }
-    else {                          // If the menu page is even and the cursor position is odd that means the cursor should be on line 2
-      lcd.setCursor(0, 1);
-      lcd.write(byte(0));
-    }
-  }
-  if (menuPage % 2 != 0) {
-    if (cursorPosition % 2 == 0) {  // If the menu page is odd and the cursor position is even that means the cursor should be on line 2
-      lcd.setCursor(0, 1);
-      lcd.write(byte(0));
-    }
-    else {                          // If the menu page is odd and the cursor position is odd that means the cursor should be on line 1
-      lcd.setCursor(0, 0);
-      lcd.write(byte(0));
-    }
-  }
-}
-
-void operateMainMenu() {
-  int activeButton = 0;
-  while (activeButton == 0) {
-    int button = readButtons();
-    /*if (readKey < 790) {
-      delay(100);
-      readKey = analogRead(0);
-      }*/
-    switch (button) {
-      case btnNONE: // When button returns as 0 there is no action taken
-        break;
-      case btnRIGHT:  // This case will execute if the "forward" button is pressed
-        button = btnNONE;
-        switch (cursorPosition) { // The case that is selected here is dependent on which menu page you are on and where the cursor is.
-          case 0:
-            menuItem1();
-            break;
-          case 1:
-            menuItem2();
-            break;
-          case 2:
-            menuItem3();
-            break;
-        }
-        activeButton = 1;
-        mainMenuDraw();
-        drawCursor();
-        break;
-      case btnUP:
-        button = btnNONE;
-        if (menuPage == 0) {
-          cursorPosition = cursorPosition - 1;
-          cursorPosition = constrain(cursorPosition, 0, ((sizeof(menuItems) / sizeof(String)) - 1));
-        }
-        if (menuPage % 2 == 0 and cursorPosition % 2 == 0) {
-          menuPage = menuPage - 1;
-          menuPage = constrain(menuPage, 0, maxMenuPages);
-        }
-
-        if (menuPage % 2 != 0 and cursorPosition % 2 != 0) {
-          menuPage = menuPage - 1;
-          menuPage = constrain(menuPage, 0, maxMenuPages);
-        }
-
-        cursorPosition = cursorPosition - 1;
-        cursorPosition = constrain(cursorPosition, 0, ((sizeof(menuItems) / sizeof(String)) - 1));
-
-        mainMenuDraw();
-        drawCursor();
-        activeButton = 1;
-        break;
-      case btnDOWN:
-        button = btnNONE;
-        if (menuPage % 2 == 0 and cursorPosition % 2 != 0) {
-          menuPage = menuPage + 1;
-          menuPage = constrain(menuPage, 0, maxMenuPages);
-        }
-
-        if (menuPage % 2 != 0 and cursorPosition % 2 == 0) {
-          menuPage = menuPage + 1;
-          menuPage = constrain(menuPage, 0, maxMenuPages);
-        }
-
-        cursorPosition = cursorPosition + 1;
-        cursorPosition = constrain(cursorPosition, 0, ((sizeof(menuItems) / sizeof(String)) - 1));
-        mainMenuDraw();
-        drawCursor();
-        activeButton = 1;
-        break;
-    }
-  }
-}
-
-void menuItem1() { // Function executes when you select the 1st item from main menu
-  int activeButton = 0;
-
-  lcd.clear();
-  lcd.setCursor(3, 0);
-  lcd.print("Sub Menu 1");
-
-  while (activeButton == 0) {
-    int button = readButtons();
-    switch (button) {
-      case btnLEFT:  // This case will execute if the "back" button is pressed
-        button = btnNONE;
-        activeButton = 1;
-        break;
-    }
-  }
-}
-
-void menuItem2() { // Function executes when you select the 2nd item from main menu
-  int activeButton = 0;
-
-  lcd.clear();
-  lcd.setCursor(3, 0);
-  lcd.print("Sub Menu 2");
-
-  while (activeButton == 0) {
-    int button = readButtons();
-    switch (button) {
-      case btnLEFT:  // This case will execute if the "back" button is pressed
-        button = btnNONE;
-        activeButton = 1;
-        break;
-    }
-  }
-}
-
-void menuItem3() { // Function executes when you select the 3rd item from main menu
-  int activeButton = btnNONE;
-
-  lcd.clear();
-  lcd.setCursor(3, 0);
-  lcd.print("Sub Menu 3");
-
-  while (activeButton == btnNONE) {
-    int button = readButtons();
-    switch (button) {
-      case btnLEFT:  // This case will execute if the "back" button is pressed
-        button = btnNONE;
-        activeButton = 1;
-        break;
-    }
-  }
-}
-
-
-String messageJson(String msg) {
-  StaticJsonDocument<JSON_DOC_CAPACITY> doc;
-  JsonObject object = doc.as<JsonObject>();
-  object["message"] = msg;
-  String response;
-  serializeJsonPretty(doc, response);
-  return response;
-}
-
-
-void Sent_serial() {
-  String content = "";  //null string constant ( an empty string )
+void readSerial() {
+  String payload = "";
   char character;
+  log("Read serial");
   while (mySerial.available()) {
     character = mySerial.read();
-    content.concat(character);
+    payload.concat(character);
   }
-  if (content != "") {
-    log(content);
+  if (payload != "") {
+    log(payload);
+    if (validatePayload(payload)) {     // valid message received
+      handlePayload(payload);
+    }
   }
 }
 
