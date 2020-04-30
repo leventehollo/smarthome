@@ -5,43 +5,33 @@ extern "C" {
 #include "user_interface.h"
 }
 
-const boolean DEBUG = true;
-const String VERSION = "1.3";
+const String VERSION = "1.8";
+
+#include <ArduinoJson.h>
 
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
-const char* HOSTNAME = "ESP-greenhouse";
-const char* ssid = "grabowski";
-const char* password = "Daisy160601";
+
+#include "MyDevice.h"
+#include "MyEnv.h"
+#include "MyServer.h"
 
 #include <ESP8266WebServer.h>
-const int WEB_SERVER_PORT = 80;
 ESP8266WebServer server(WEB_SERVER_PORT);
 
 #include <ArduinoJson.h>
-const size_t JSON_DOC_CAPACITY = JSON_OBJECT_SIZE(1);
 
 #include <SoftwareSerial.h>
-const int SERIAL_DATA_RATE = 9600;
-//const int SERIAL_DATA_RATE = 115200;
-SoftwareSerial mySerial(3, 2); // RX, TX
+
+//SoftwareSerial mySerial(3, 2); // RX, TX
 
 #include <BlynkSimpleEsp8266.h>
-//char blynk_auth[] = "rpHU4_BDa053QAIRKy-GStguhZid1FzF";    //home@hollo.cc - Irrigation Greenhouse
-char blynk_auth[] = "he08DnzJLYbZI9F5WaKQZ2h5VWIYNPkF";    //home@hollo.cc - Irrigation Grass
-
-const uint8_t PIN_TERMINAL = V0;
-const uint8_t PIN_LED1 = V1;
-WidgetTerminal terminal(PIN_TERMINAL);
-WidgetLED LED1(PIN_LED1);
+//#include "BlynkConfigGreenhouse.h"
+#include "BlynkConfigGrass.h"
 
 #include <SimpleTimer.h>
 SimpleTimer timer;
-
-
-const int GPIO_SIZE = 9;
-int D[] = {16, 5, 4, 0, 2, 14, 12, 13, 15};
 
 void setup() {
   Serial.begin(SERIAL_DATA_RATE);
@@ -50,12 +40,12 @@ void setup() {
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
-  mySerial.begin(SERIAL_DATA_RATE);
-  timer.setInterval(500, Sent_serial);
+  //mySerial.begin(SERIAL_DATA_RATE);
+  timer.setInterval(1000, checkVirtualPins);
 
 
-  Blynk.begin(blynk_auth, ssid, password);
-  while (Blynk.connect() == false) {}
+  //Blynk.begin(blynk_auth, ssid, password);
+  //while (Blynk.connect() == false) {}
 
   initPins();
 
@@ -67,15 +57,17 @@ void setup() {
   server.begin();
   Serial.println("Server started at: ");
   Serial.print("http://");
-  Serial.print(WiFi.localIP());
+  Serial.println(WiFi.localIP());
 
   Serial.println("version: " + VERSION);
 }
 
 void loop() {
   ArduinoOTA.handle();
-  Blynk.run();
+  //Blynk.run();
   server.handleClient();
+  log("hello");
+  delay(2000);
 }
 
 void defineServerEndpoints() {
@@ -103,11 +95,9 @@ void defineServerEndpoints() {
         int pin = pinParam.toInt();
         if (server.arg("mode") == "ON")  {
           digitalWrite(D[pin], LOW);
-          LED1.on();
         }
         if (server.arg("mode") == "OFF")  {
           digitalWrite(D[pin], HIGH);
-          LED1.off();
         }
         server.send(200, "text/json", pinsJson());
       }
@@ -224,8 +214,9 @@ void setupOTA() {
   ArduinoOTA.begin();
 }
 
-// Subrutine ( Sent_serial ) data to blynk terminal widget
-void Sent_serial() {
+/*
+  // Subrutine ( Sent_serial ) data to blynk terminal widget
+  void Sent_serial() {
   // Sent serial data to Blynk terminal - Unlimited string readed
   String content = "";  //null string constant ( an empty string )
   char character;
@@ -237,12 +228,18 @@ void Sent_serial() {
   if (content != "") {
     Blynk.virtualWrite(PIN_TERMINAL, content);
   }
-}
+  }*/
 
-void httpJsonResponseHeader(WiFiClient client, int code, String response) {
-  client.println("HTTP/1.1 " + String(code) + " " + response);
-  client.println("Content-Type: text/json");
-  client.println("");                             //  do not forget this one
+void checkVirtualPins() {
+  if (virtualPins[PIN_RELAY_01]) {
+    log("V11 is on");
+    Serial.println("asd");
+
+  }
+  else {
+    log("V11 is off");
+    Serial.println("dfg");
+  }
 }
 
 String getValue(String data, char separator, int index) {
@@ -266,4 +263,11 @@ boolean isNumber(String str) {
     if (isDigit(str.charAt(i))) return true;
   }
   return false;
+}
+
+void log(String msg) {
+  Serial.println(msg);
+  if (Blynk.connected()) {
+    Blynk.virtualWrite(PIN_TERMINAL, msg);
+  }
 }

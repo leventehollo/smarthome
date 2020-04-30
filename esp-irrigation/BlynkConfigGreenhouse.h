@@ -5,6 +5,7 @@
 #define BlynkConfigGreenhouse_h
 
 const char blynk_auth[] = "rpHU4_BDa053QAIRKy-GStguhZid1FzF";    //home@hollo.cc - Irrigation Greenhouse
+const char* HOSTNAME = "ESP-greenhouse";
 
 const uint8_t PIN_TERMINAL = V0;
 const uint8_t PIN_LED1 = V1;

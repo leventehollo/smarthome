@@ -6,7 +6,6 @@
 
 const boolean DEBUG = false;
 
-const char* HOSTNAME = "ESP-greenhouse";
 const char* ssid = "grabowski";
 const char* password = "Daisy160601";
 
