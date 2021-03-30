@@ -72,11 +72,9 @@ void setup() {
   publishStatus("setting_up");
   initPins();
 
-  //connectToWifi();
   setupOTA();
 
   defineServerEndpoints();
-
   
   server.begin();
   Serial.println("Server started at: ");
@@ -194,27 +192,6 @@ String messageJson(String msg) {
   serializeJsonPretty(doc, response);
   return response;
 }
-
-/*
-  void connectToWifi() {
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  wifi_station_set_hostname(HOSTNAME);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    Serial.println("Connection Failed! Rebooting...");
-    delay(5000);
-    ESP.restart();
-  }
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  }
-*/
 
 void setupOTA() {
   // Port defaults to 8266

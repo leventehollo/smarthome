@@ -36,8 +36,6 @@ int virtualPins[] = {};
 const uint8_t PIN_RELAY_01 = V11;
 
 
-
-
 BLYNK_CONNECTED() {
   // Request the latest state from the server
   //Blynk.syncVirtual(V2);     
