@@ -6,7 +6,7 @@ extern "C" {
 }
 
 const String VERSION = "1.9";
-const String VERSION_DATE = "1.9";
+const String VERSION_DATE = "2021";
 
 
 #include <ArduinoJson.h>
@@ -16,7 +16,15 @@ const String VERSION_DATE = "1.9";
 
 #include <WiFiUdp.h>
 
-#include "MyDevice.h"
+#include <BlynkSimpleEsp8266.h>
+
+#include "BlynkConfigGreenhouse.h"
+//#include "BlynkConfigGrass.h"
+
+BlynkTimer timer;
+
+#include "MqttConfig.h"
+#include "Device_Lolin_NodeMCU_v3.h"
 #include "MyEnv.h"
 #include "MyServer.h"
 
@@ -27,17 +35,6 @@ ESP8266WebServer server(WEB_SERVER_PORT);
 
 //SoftwareSerial mySerial(3, 2); // RX, TX
 
-#include <BlynkSimpleEsp8266.h>
-
-#include "BlynkConfigGreenhouse.h"
-//#include "BlynkConfigGrass.h"
-
-BlynkTimer timer;
-
-#include "MqttConfig.h"
-
-int pinStates[] = {};
-
 void msgCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
@@ -47,7 +44,6 @@ void msgCallback(char* topic, byte* payload, unsigned int length) {
   }
   Serial.println();
 }
-
 
 void setup() {
   Serial.begin(SERIAL_DATA_RATE);
@@ -61,6 +57,7 @@ void setup() {
 
   Blynk.begin(blynk_auth, ssid, password);
   while (Blynk.connect() == false) {}
+  setupOTA();
 
   mqtt.setCallback(msgCallback);
   if (mqtt.connect(HOSTNAME, MQTT_USERNAME, MQTT_PASSWORD)) {
@@ -68,14 +65,14 @@ void setup() {
     publishConnected();
     mqtt.subscribe("inTopic");
   }
-  
+  Serial.println("rising star: "+String(RISING) + " " + String(FALLING) + " " + String(CHANGE));
+
   publishStatus("setting_up");
   initPins();
-
-  setupOTA();
+  attachInterrupts();
 
   defineServerEndpoints();
-  
+
   server.begin();
   Serial.println("Server started at: ");
   Serial.print("http://");
@@ -91,17 +88,6 @@ void loop() {
   Blynk.run();
   server.handleClient();
   mqttCheckConnection();
-}
-
-void checkPinChanges() {
-  for (int i = 0; i < GPIO_SIZE; i++) {
-    int newPinState = digitalRead(D[i]);
-    if (pinStates[i] != newPinState) {
-      //pin state changed
-      pinStates[i] = newPinState;
-    }
-
-  };
 }
 
 void defineServerEndpoints() {
@@ -127,14 +113,14 @@ void defineServerEndpoints() {
       }
       else {
         int pin = pinParam.toInt();
-        int previous_state = digitalRead(D[pin]);
+        int previous_state = digitalRead(PINS[0][pin]);
         int new_state = -1;
         if (server.arg("mode") == "ON")  {
-          digitalWrite(D[pin], LOW);
+          digitalWrite(PINS[0][pin], LOW);
           new_state = LOW;
         }
         if (server.arg("mode") == "OFF")  {
-          digitalWrite(D[pin], HIGH);
+          digitalWrite(PINS[0][pin], HIGH);
           new_state = HIGH;
         }
         server.send(200, "text/json", pinsJson(pin, previous_state, new_state));
@@ -145,11 +131,12 @@ void defineServerEndpoints() {
 }
 
 void initPins() {
+  INPUT_PULLDOWN_16;
   log("There are " + String(GPIO_SIZE) + " pins configured:");
   for (int i = 0; i < GPIO_SIZE; i++) {
-    pinMode(D[i], OUTPUT);
-    digitalWrite(D[i], HIGH);
-    log("D[" + String(i) + "]: " + String(D[i]));
+    pinMode(PINS[0][i], OUTPUT);
+    digitalWrite(PINS[0][i], HIGH);
+    log("PINS[0][" + String(i) + "]: " + String(PINS[0][i]));
   }
 }
 
@@ -158,12 +145,12 @@ String pinsJson(int pin_changed, int previous_state, int new_state) {
   JsonObject object = doc.to<JsonObject>();
   JsonObject pins = object.createNestedObject("pins");
   object["pin_changed"] = pin_changed;
-  object["gpio_changed"] = D[pin_changed];
+  object["gpio_changed"] = PINS[0][pin_changed];
   object["previous_state"] = previous_state;
   object["new_state"] = new_state;
 
   for (int i = 0; i < GPIO_SIZE; i++) {
-    int pinValue = digitalRead(D[i]);
+    int pinValue = digitalRead(PINS[0][i]);
     pins[String(i)] = String(pinValue);
   };
   String response;
@@ -177,7 +164,7 @@ String gpioJson() {
   object["GPIO_SIZE"] = GPIO_SIZE;
   JsonObject pins = object.createNestedObject("pins");
   for (int i = 0; i < GPIO_SIZE; i++) {
-    pins[String(i)] = D[i];
+    pins[String(i)] = PINS[0][i];
   };
   String response;
   serializeJsonPretty(doc, response);

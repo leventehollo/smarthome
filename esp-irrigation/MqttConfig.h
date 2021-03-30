@@ -21,6 +21,10 @@ void publishStatus(const char* status) {
   mqtt.publish((TOPIC_DEVICE_ROOT + TOPIC_STATUS).c_str() ,status);
 }
 
+void publishValveState(const int valve, const int mode) {
+  mqtt.publish((TOPIC_DEVICE_ROOT + TOPIC_VALVE + String(valve)).c_str() , mode == RISING ? "off" : "on");
+}
+
 long mqttLastReconnectAttempt = 0;
 
 boolean mqttReconnect() {

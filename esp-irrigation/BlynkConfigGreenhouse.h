@@ -14,14 +14,8 @@ const char blynk_auth[] = "rpHU4_BDa053QAIRKy-GStguhZid1FzF";    //home@hollo.cc
 
 #define TOPIC_CONNECTION "/connection"
 #define TOPIC_STATUS "/status"
-#define TOPIC_VALVE1 "/valve1"
-#define TOPIC_VALVE2 "/valve2"
-#define TOPIC_VALVE3 "/valve3"
-#define TOPIC_VALVE4 "/valve4"
-#define TOPIC_VALVE5 "/valve5"
-#define TOPIC_VALVE6 "/valve6"
-#define TOPIC_VALVE7 "/valve7"
-#define TOPIC_VALVE8 "/valve8"
+#define TOPIC_VALVE "/valve"
+
 
 const String TOPIC_DEVICE_ROOT = LOCATION FLOOR ROOM HOSTNAME;
 
