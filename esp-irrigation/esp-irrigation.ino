@@ -5,12 +5,15 @@ extern "C" {
 #include "user_interface.h"
 }
 
-const String VERSION = "1.8";
+const String VERSION = "1.9";
+const String VERSION_DATE = "1.9";
+
 
 #include <ArduinoJson.h>
 
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
+
 #include <WiFiUdp.h>
 
 #include "MyDevice.h"
@@ -20,18 +23,31 @@ const String VERSION = "1.8";
 #include <ESP8266WebServer.h>
 ESP8266WebServer server(WEB_SERVER_PORT);
 
-#include <ArduinoJson.h>
-
 #include <SoftwareSerial.h>
 
 //SoftwareSerial mySerial(3, 2); // RX, TX
 
 #include <BlynkSimpleEsp8266.h>
-//#include "BlynkConfigGreenhouse.h"
-#include "BlynkConfigGrass.h"
 
-#include <SimpleTimer.h>
-SimpleTimer timer;
+#include "BlynkConfigGreenhouse.h"
+//#include "BlynkConfigGrass.h"
+
+BlynkTimer timer;
+
+#include "MqttConfig.h"
+
+int pinStates[] = {};
+
+void msgCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+}
+
 
 void setup() {
   Serial.begin(SERIAL_DATA_RATE);
@@ -43,31 +59,51 @@ void setup() {
   //mySerial.begin(SERIAL_DATA_RATE);
   timer.setInterval(1000, checkVirtualPins);
 
+  Blynk.begin(blynk_auth, ssid, password);
+  while (Blynk.connect() == false) {}
 
-  //Blynk.begin(blynk_auth, ssid, password);
-  //while (Blynk.connect() == false) {}
-
+  mqtt.setCallback(msgCallback);
+  if (mqtt.connect(HOSTNAME, MQTT_USERNAME, MQTT_PASSWORD)) {
+    log("Connected to MQTT: " + String(MQTT_SERVER));
+    publishConnected();
+    mqtt.subscribe("inTopic");
+  }
+  
+  publishStatus("setting_up");
   initPins();
 
-  connectToWifi();
+  //connectToWifi();
   setupOTA();
 
   defineServerEndpoints();
 
+  
   server.begin();
   Serial.println("Server started at: ");
   Serial.print("http://");
   Serial.println(WiFi.localIP());
-
-  Serial.println("version: " + VERSION);
+  Serial.println("Version: " + VERSION);
+  Serial.println("Released: " + VERSION_DATE);
+  publishStatus("setup_complete");
 }
+
 
 void loop() {
   ArduinoOTA.handle();
-  //Blynk.run();
+  Blynk.run();
   server.handleClient();
-  log("hello");
-  delay(2000);
+  mqttCheckConnection();
+}
+
+void checkPinChanges() {
+  for (int i = 0; i < GPIO_SIZE; i++) {
+    int newPinState = digitalRead(D[i]);
+    if (pinStates[i] != newPinState) {
+      //pin state changed
+      pinStates[i] = newPinState;
+    }
+
+  };
 }
 
 void defineServerEndpoints() {
@@ -76,7 +112,7 @@ void defineServerEndpoints() {
   });
 
   server.on("/version", []() {
-    server.send(200, "text/html", VERSION);
+    server.send(200, "text/html", VERSION + " " + VERSION_DATE);
   });
 
   server.on("/gpio", []() {
@@ -93,13 +129,17 @@ void defineServerEndpoints() {
       }
       else {
         int pin = pinParam.toInt();
+        int previous_state = digitalRead(D[pin]);
+        int new_state = -1;
         if (server.arg("mode") == "ON")  {
           digitalWrite(D[pin], LOW);
+          new_state = LOW;
         }
         if (server.arg("mode") == "OFF")  {
           digitalWrite(D[pin], HIGH);
+          new_state = HIGH;
         }
-        server.send(200, "text/json", pinsJson());
+        server.send(200, "text/json", pinsJson(pin, previous_state, new_state));
       }
     }
     delay(1000);
@@ -107,20 +147,26 @@ void defineServerEndpoints() {
 }
 
 void initPins() {
-  Serial.println("There are " + String(GPIO_SIZE) + " pins configured:");
+  log("There are " + String(GPIO_SIZE) + " pins configured:");
   for (int i = 0; i < GPIO_SIZE; i++) {
     pinMode(D[i], OUTPUT);
     digitalWrite(D[i], HIGH);
-    Serial.println("D[" + String(i) + "]: " + String(D[i]));
+    log("D[" + String(i) + "]: " + String(D[i]));
   }
 }
 
-String pinsJson() {
+String pinsJson(int pin_changed, int previous_state, int new_state) {
   StaticJsonDocument<JSON_DOC_CAPACITY> doc;
-  JsonObject object = doc.as<JsonObject>();
+  JsonObject object = doc.to<JsonObject>();
+  JsonObject pins = object.createNestedObject("pins");
+  object["pin_changed"] = pin_changed;
+  object["gpio_changed"] = D[pin_changed];
+  object["previous_state"] = previous_state;
+  object["new_state"] = new_state;
+
   for (int i = 0; i < GPIO_SIZE; i++) {
     int pinValue = digitalRead(D[i]);
-    object[String(i)] = String(pinValue);
+    pins[String(i)] = String(pinValue);
   };
   String response;
   serializeJsonPretty(doc, response);
@@ -129,13 +175,14 @@ String pinsJson() {
 
 String gpioJson() {
   StaticJsonDocument<JSON_DOC_CAPACITY> doc;
-  JsonObject object = doc.as<JsonObject>();
+  JsonObject object = doc.to<JsonObject>();
+  object["GPIO_SIZE"] = GPIO_SIZE;
+  JsonObject pins = object.createNestedObject("pins");
   for (int i = 0; i < GPIO_SIZE; i++) {
-    object[String(i)] = D[i];
+    pins[String(i)] = D[i];
   };
   String response;
   serializeJsonPretty(doc, response);
-  serializeJsonPretty(doc, Serial);
   return response;
 }
 
@@ -148,7 +195,8 @@ String messageJson(String msg) {
   return response;
 }
 
-void connectToWifi() {
+/*
+  void connectToWifi() {
   Serial.println();
   Serial.print("Connecting to ");
   Serial.println(ssid);
@@ -165,7 +213,8 @@ void connectToWifi() {
 
   Serial.println("");
   Serial.println("WiFi connected");
-}
+  }
+*/
 
 void setupOTA() {
   // Port defaults to 8266
@@ -267,7 +316,7 @@ boolean isNumber(String str) {
 
 void log(String msg) {
   Serial.println(msg);
-  if (Blynk.connected()) {
+  /*if (Blynk.connected()) {
     Blynk.virtualWrite(PIN_TERMINAL, msg);
-  }
+    }*/
 }

@@ -3,7 +3,25 @@
 #define BlynkConfigGrass_h
 
 const char blynk_auth[] = "he08DnzJLYbZI9F5WaKQZ2h5VWIYNPkF";    //home@hollo.cc - Irrigation Grass
-const char* HOSTNAME = "ESP-grass";
+#define HOSTNAME "ESP-grass"
+
+// LOCATION/FLOOR/ROOM/DEVICE/SENSOR
+#define LOCATION "home/"
+#define FLOOR "garden/"
+#define ROOM "grass/"
+
+#define TOPIC_CONNECTION "/connection"
+#define TOPIC_STATUS "/status"
+#define TOPIC_VALVE1 "/valve1"
+#define TOPIC_VALVE2 "/valve2"
+#define TOPIC_VALVE3 "/valve3"
+#define TOPIC_VALVE4 "/valve4"
+#define TOPIC_VALVE5 "/valve5"
+#define TOPIC_VALVE6 "/valve6"
+#define TOPIC_VALVE7 "/valve7"
+#define TOPIC_VALVE8 "/valve8"
+
+const String TOPIC_DEVICE_ROOT = LOCATION FLOOR ROOM HOSTNAME;
 
 const uint8_t PIN_TERMINAL = V0;
 WidgetTerminal terminal(PIN_TERMINAL);

@@ -10,7 +10,7 @@ const String TEXT_PLAIN = "text/plain";
 const String TEXT_HTML = "text/html";
 const String TEXT_JSON = "text/json";
 
-const size_t JSON_DOC_CAPACITY = JSON_OBJECT_SIZE(1);
+const size_t JSON_DOC_CAPACITY = JSON_OBJECT_SIZE(100);
 
 
 void httpJsonResponseHeader(WiFiClient client, int code, String response) {
